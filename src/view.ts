@@ -88,34 +88,35 @@ export class BMOView extends ItemView {
         // Models dropdown
         const modelOptions = populateModelDropdown(this.plugin, this.settings);
 
-        const dotIndicator = chatbotContainer.createEl('span', {
+        // Create a container for the dot indicator and label
+        const statusIndicator = chatbotContainer.createEl('div', {
+            attr: {
+                class: 'statusIndicator',
+                id: 'statusIndicator'
+            }
+        });
+
+        // Create a label next to the dot
+        const label = statusIndicator.createEl('span', {
+            text: 'Current Note',
+            attr: {
+                class: 'statusLabel'
+            }
+        });
+
+        const dotIndicator = statusIndicator.createEl('span', {
             attr: {
                 class: 'dotIndicator',
                 id: 'markDownBoolean'
             }
         });
-        
-        const referenceCurrentNoteElement = chatbotContainer.createEl('p', {
-            text: 'Reference Current Note',
-            attr: {
-                id: 'referenceCurrentNote'
-            }
-        });
+        dotIndicator.style.backgroundColor = 'red'; // Initialize to red
+
+
 
         header.appendChild(chatbotNameHeading);
         header.appendChild(modelOptions);
-
-        referenceCurrentNoteElement.appendChild(dotIndicator);
-
-        referenceCurrentNoteElement.style.display = 'none';
-        
-        if (referenceCurrentNoteElement) {
-            if (this.settings.general.enableReferenceCurrentNote) {
-                referenceCurrentNoteElement.style.display = 'block';
-            } else {
-                referenceCurrentNoteElement.style.display = 'none';
-            }
-        }
+        header.appendChild(statusIndicator);
     
         const messageContainer = chatbotContainer.createEl('div', {
             attr: {
@@ -128,8 +129,7 @@ export class BMOView extends ItemView {
         }
         else {
             header.style.display = 'none';
-            messageContainer.style.maxHeight = 'calc(100% - 60px)';
-            referenceCurrentNoteElement.style.margin = '0.5rem 0 0.5rem 0';
+            messageContainer.style.maxHeight = 'calc(100% - 60px)';            
         }
         
         await loadData(this.plugin);
@@ -246,7 +246,20 @@ export class BMOView extends ItemView {
             return;  // Exit the function early
         }
         
-        const input = this.textareaElement.value;
+        let input = this.textareaElement.value;
+
+        // Regular expression to find sequences starting with "@/" and ending with "/@"
+        // and sequences starting with "@" not followed by "/"
+        const noteNameRegex = /@\/([^@]+)\/@|@([^\/][^\s@]*)/g;
+        let match;
+
+        while ((match = noteNameRegex.exec(input)) !== null) {
+            const noteName = match[1] ? match[1].trim() : match[2].trim(); // Extract the note name
+            const noteContent = await fetchNoteContent(this.plugin, noteName);
+            const original = match[0]; // The whole matched string including @/ and /@
+            input = input.replace(original, noteContent);
+        }
+
         const index = messageHistory.length - 1;
 
         // Only allow /stop command to be executed during fetch
@@ -310,7 +323,7 @@ export class BMOView extends ItemView {
                                 const match = line.match(/^#+/);
                                 const headingLevel = match ? match[0].length : 0;
 
-                                if (inSubpath) {
+                                if (inSubpath) {                                                    
                                     if (headingLevel <= subpathLevel) {
                                         break;
                                     }
@@ -349,9 +362,19 @@ export class BMOView extends ItemView {
         // Remove duplicates in the final output
         inputModified = inputModified.replace(/(<note-rendered>File cannot be read.<\/note-rendered>)+/g, '<note-rendered>File cannot be read.</note-rendered>');
 
-
-
-        // console.log(`Modified input: ${inputModified}`);
+        // Check if the input contains "@Current"
+        const dotIndicator = document.getElementById('markDownBoolean') as HTMLElement;
+        if (input.includes('@Current')) {
+            const currentNoteContent = await getActiveFileContent(this.plugin, this.settings);
+            inputModified = inputModified.replace('@Current', currentNoteContent);
+            if (dotIndicator) {
+                dotIndicator.style.backgroundColor = 'green'; // Set to green if "@Current" is present
+            }
+        } else {
+            if (dotIndicator) {
+                dotIndicator.style.backgroundColor = 'red'; // Set to red if "@Current" is not present
+            }
+        }
 
         if (this.preventEnter === false && !event.shiftKey && event.key === 'Enter') {
             loadData(this.plugin);
@@ -390,31 +413,24 @@ export class BMOView extends ItemView {
                 ];
 
                 if (!excludedCommands.some(cmd => input.startsWith(cmd))) {
-                    const parts = input.split(' '); // Splits the input on spaces
-                    const baseCommand = parts[0]; // The base command is the first part
+                    const parts = input.split(' ');
+                    const baseCommand = parts[0];
                 
                     if (baseCommand.startsWith('/') && commandMap.hasOwnProperty(baseCommand)) {
-                        // This block handles recognized commands with or without parameters
+                        // Handle recognized commands
                         addMessage(this.plugin, input, 'userMessage', this.settings, index);
                         const userMessageDiv = displayUserMessage(this.plugin, this.settings, input);
                         messageContainer.appendChild(userMessageDiv);
-                        // console.log('Command processed:', commandMap[baseCommand], 'with parameters:', parts.slice(1).join(' ')); // Logs the processed command and parameters
                     } else if (!baseCommand.startsWith('/')) {
-                        // This block handles non-command inputs
-                        // console.log('User input modified:', inputModified);
+                        // Handle non-command inputs
                         addMessage(this.plugin, inputModified, 'userMessage', this.settings, index);
                         const userMessageDiv = displayUserMessage(this.plugin, this.settings, input);
                         messageContainer.appendChild(userMessageDiv);
-                    } else {
-                        // console.log('Unknown command ignored:', input);
                     }
                 }
                 
-                
-
                 if (input.startsWith('/')) {
                     executeCommand(input, this.settings, this.plugin);
-
 
                     if (!excludedCommands.some(cmd => input.startsWith(cmd))) {
                         const botMessages = messageContainer.querySelectorAll('.botMessage');
@@ -684,3 +700,19 @@ export function populateModelDropdown(plugin: BMOGPT, settings: BMOSettings): HT
 
     return modelOptions;
 }
+
+// Function to fetch note content by name
+async function fetchNoteContent(plugin: BMOGPT, noteName: string): Promise<string> {
+    try {
+        const normalizedNoteName = noteName.replace(/\s+/g, ' ').trim(); // Ensure no extra spaces
+        const file = plugin.app.vault.getAbstractFileByPath(normalizedNoteName);
+        if (file instanceof TFile) {
+            return await plugin.app.vault.read(file);
+        }
+    } catch (error) {
+        console.error('Error fetching note content:', error);
+    }
+    return 'Note content could not be retrieved.';
+}
+
+

@@ -182,23 +182,4 @@ export async function addGeneralSettings(containerEl: HTMLElement, plugin: BMOGP
                 SettingTab.display();
             })
         );
-
-    new Setting(settingsContainer)
-        .setName('Enable Reference Current Note')
-        .setDesc('Enable chatbot to reference current active note during conversation.')
-        .addToggle((toggle) =>
-            toggle.setValue(plugin.settings.general.enableReferenceCurrentNote).onChange((value) => {
-                plugin.settings.general.enableReferenceCurrentNote = value;
-                plugin.saveSettings();
-
-                const referenceCurrentNoteElement = document.getElementById('referenceCurrentNote');
-                if (referenceCurrentNoteElement) {
-                    if (value) {
-                        referenceCurrentNoteElement.style.display = 'block';
-                    } else {
-                        referenceCurrentNoteElement.style.display = 'none';
-                    }
-                }
-            })
-        );
 }
